@@ -3,12 +3,10 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, joinedload
 
-from app.catalog.loader import get_material_by_id
 from app.core.constants import PROJECT_STATUS_REPORT_READY
 from app.crud.estimation_crud import EstimationCRUD
 from app.crud.image_crud import ImageCRUD
 from app.crud.project_crud import ProjectCRUD
-from app.crud.zone_crud import ZoneCRUD
 from app.models.renovation_models import RenovationReport
 from app.reports.pdf_generator import generate_pdf_report
 from app.utils.file_handler import get_report_output_path
@@ -39,33 +37,30 @@ class ReportCRUD:
             if not original["success"] or not generated["success"]:
                 return {"success": False, "msg": "Before/after images required", "data": None}
 
-            zone_crud = ZoneCRUD(self.db)
-            zones_result = zone_crud.list_zones(project_id)
-            zones = zones_result["data"] if zones_result["success"] else []
-
-            zone_map = {z.id: z for z in zones}
+            summary = est_result["data"]
             zones_summary = []
             cost_breakdown = []
 
-            for item in est_result["data"]["items"]:
-                zone = zone_map.get(item.zone_id)
-                material = get_material_by_id(item.material_id)
+            for item in summary["items"]:
                 zones_summary.append(
                     {
-                        "zone_label": zone.label if zone else "",
-                        "material_name": material["name"] if material else item.material_id,
-                        "area_sqft": item.area_sqft,
+                        "zone_label": item.get("zone_label", ""),
+                        "material_name": item.get("material_name") or item["material_id"],
+                        "area_sqft": item["area_sqft"],
                     }
                 )
                 cost_breakdown.append(
                     {
-                        "zone_label": zone.label if zone else "",
-                        "material_id": item.material_id,
-                        "qty_required": item.qty_required,
-                        "unit": item.unit,
-                        "material_cost_inr": item.material_cost_inr,
-                        "labour_cost_inr": item.labour_cost_inr,
-                        "total_cost_inr": item.total_cost_inr,
+                        "zone_label": item.get("zone_label", ""),
+                        "material_id": item["material_id"],
+                        "qty_required": item["qty_required"],
+                        "unit": item["unit"],
+                        "applied_unit_price_inr": item.get("applied_unit_price_inr"),
+                        "applied_labour_rate_inr": item.get("applied_labour_rate_inr"),
+                        "wastage_pct": item.get("wastage_pct"),
+                        "material_cost_inr": item["material_cost_inr"],
+                        "labour_cost_inr": item["labour_cost_inr"],
+                        "total_cost_inr": item["total_cost_inr"],
                     }
                 )
 
@@ -76,8 +71,13 @@ class ReportCRUD:
                 generated_image_path=generated["data"].file_path,
                 zones_summary=zones_summary,
                 cost_breakdown=cost_breakdown,
-                grand_total_inr=est_result["data"]["grand_total_inr"],
-                total_days=est_result["data"]["total_days"],
+                grand_total_inr=summary["grand_total_inr"],
+                total_days=summary["total_days"],
+                material_subtotal_inr=summary.get("material_subtotal_inr", 0.0),
+                labour_subtotal_inr=summary.get("labour_subtotal_inr", 0.0),
+                gst_pct=summary.get("gst_pct", 0.0),
+                gst_amount_inr=summary.get("gst_amount_inr", 0.0),
+                total_payable_inr=summary.get("total_payable_inr", summary["grand_total_inr"]),
                 house_description=project.house_description or "",
                 renovation_needs=project.renovation_needs or [],
                 renovation_suggestions=project.renovation_suggestions or [],

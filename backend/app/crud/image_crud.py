@@ -4,8 +4,10 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.constants import (
+    IMAGE_TYPE_GENERATED,
     IMAGE_TYPE_MASK,
     IMAGE_TYPE_ORIGINAL,
+    IMAGE_TYPE_SKETCH,
     PROJECT_STATUS_IMAGE_UPLOADED,
     TASK_STATUS_PENDING,
     TASK_TYPE_VALIDATE_IMAGE,
@@ -27,6 +29,11 @@ class ImageCRUD:
             project_result = project_crud.get_project(project_id)
             if not project_result["success"]:
                 return project_result
+
+            # A fresh upload replaces the project's photo: drop the previous
+            # original, its sketch and any generated preview so the before/after
+            # comparison and report can never mix images from two uploads.
+            self._clear_photo_artifacts(project_id)
 
             file_path, size_kb, mime_type = await save_upload_file(file, str(project_id))
 
@@ -63,6 +70,23 @@ class ImageCRUD:
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
+
+    def _clear_photo_artifacts(self, project_id: uuid.UUID) -> None:
+        """Remove the previous original/sketch/generated images (rows + files)."""
+        stale = (
+            self.db.query(ProjectImage)
+            .filter(
+                ProjectImage.project_id == project_id,
+                ProjectImage.image_type.in_(
+                    [IMAGE_TYPE_ORIGINAL, IMAGE_TYPE_SKETCH, IMAGE_TYPE_GENERATED]
+                ),
+            )
+            .all()
+        )
+        for image in stale:
+            delete_file(image.file_path)
+            self.db.delete(image)
+        self.db.flush()
 
     async def upload_mask(self, project_id: uuid.UUID, file: UploadFile) -> dict:
         try:

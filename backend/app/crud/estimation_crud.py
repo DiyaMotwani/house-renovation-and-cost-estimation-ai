@@ -1,9 +1,11 @@
 import uuid
+from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
 
 from app.catalog.loader import get_material_by_id
 from app.core.constants import (
+    GST_RATE_PCT,
     PROJECT_STATUS_ESTIMATION_COMPLETE,
     PROJECT_STATUS_GENERATION_COMPLETE,
     TASK_STATUS_PENDING,
@@ -14,6 +16,72 @@ from app.crud.project_crud import ProjectCRUD
 from app.crud.zone_crud import ZoneCRUD
 from app.models.renovation_models import ProjectEstimation, ProjectZone, TaskRecord
 from app.utils.cost_calculator import calculate_zone_cost
+
+
+def _empty_costs(est: ProjectEstimation) -> dict:
+    """Rate-analysis fallback for a stored item whose material left the catalog."""
+    return {
+        "wastage_pct": 0.0,
+        "base_unit_price_inr": est.custom_unit_price_inr or 0.0,
+        "applied_unit_price_inr": est.custom_unit_price_inr or 0.0,
+        "unit_price_overridden": est.custom_unit_price_inr is not None,
+        "base_labour_rate_inr": est.custom_labour_rate_inr or 0.0,
+        "applied_labour_rate_inr": est.custom_labour_rate_inr or 0.0,
+        "labour_overridden": est.custom_labour_rate_inr is not None,
+    }
+
+
+def _serialize_item(est: ProjectEstimation, zone: ProjectZone | None, material: dict, costs: dict) -> dict:
+    """Flatten a stored estimation + its rate analysis into one BOQ line item."""
+    return {
+        "id": est.id,
+        "project_id": est.project_id,
+        "zone_id": est.zone_id,
+        "zone_label": zone.label if zone else "",
+        "material_id": est.material_id,
+        "material_name": material.get("name") if material else est.material_id,
+        "category": material.get("category") if material else "",
+        "area_sqft": est.area_sqft,
+        "qty_required": est.qty_required,
+        "unit": est.unit,
+        "wastage_pct": costs["wastage_pct"],
+        "base_unit_price_inr": costs["base_unit_price_inr"],
+        "applied_unit_price_inr": costs["applied_unit_price_inr"],
+        "unit_price_overridden": costs["unit_price_overridden"],
+        "base_labour_rate_inr": costs["base_labour_rate_inr"],
+        "applied_labour_rate_inr": costs["applied_labour_rate_inr"],
+        "labour_overridden": costs["labour_overridden"],
+        "material_cost_inr": est.material_cost_inr,
+        "labour_cost_inr": est.labour_cost_inr,
+        "total_cost_inr": est.total_cost_inr,
+        "estimated_days": est.estimated_days,
+        "custom_unit_price_inr": est.custom_unit_price_inr,
+        "custom_labour_rate_inr": est.custom_labour_rate_inr,
+        "dimension_anchor_used": est.dimension_anchor_used,
+        "dimension_confidence": est.dimension_confidence,
+        "dimension_reasoning": est.dimension_reasoning,
+        "calculated_at": est.calculated_at,
+    }
+
+
+def _build_summary(items: list[dict]) -> dict:
+    """Roll line items up into a contractor-style summary with subtotals + GST."""
+    material_subtotal = sum(i["material_cost_inr"] for i in items)
+    labour_subtotal = sum(i["labour_cost_inr"] for i in items)
+    grand_total = material_subtotal + labour_subtotal
+    gst_amount = grand_total * GST_RATE_PCT / 100
+    total_payable = grand_total + gst_amount
+    total_days = max((i["estimated_days"] for i in items), default=0.0)
+    return {
+        "items": items,
+        "material_subtotal_inr": round(material_subtotal, 2),
+        "labour_subtotal_inr": round(labour_subtotal, 2),
+        "grand_total_inr": round(grand_total, 2),
+        "gst_pct": GST_RATE_PCT,
+        "gst_amount_inr": round(gst_amount, 2),
+        "total_payable_inr": round(total_payable),
+        "total_days": round(total_days, 2),
+    }
 
 
 class EstimationCRUD:
@@ -52,9 +120,11 @@ class EstimationCRUD:
 
         self.db.query(ProjectEstimation).filter(ProjectEstimation.project_id == project_id).delete()
 
+        # Stamp every line with one consistent timestamp. Serializing from this
+        # in-memory value (instead of re-reading the row after commit) keeps the
+        # request safe when concurrent recalculations delete each other's rows.
+        now = datetime.now()
         items = []
-        grand_total = 0.0
-        max_days = 0.0
 
         for zone in zones:
             if not zone.material_assignment:
@@ -99,44 +169,42 @@ class EstimationCRUD:
                 dimension_anchor_used=anchor,
                 dimension_confidence=confidence,
                 dimension_reasoning=reasoning,
+                calculated_at=now,
             )
             self.db.add(estimation)
-            items.append(estimation)
-            grand_total += costs["total_cost_inr"]
-            max_days = max(max_days, costs["estimated_days"])
+            items.append(_serialize_item(estimation, zone, material, costs))
 
         project_crud.update_status(project_id, PROJECT_STATUS_ESTIMATION_COMPLETE)
         self.db.commit()
-        for item in items:
-            self.db.refresh(item)
 
-        return {
-            "success": True,
-            "msg": "Estimation complete",
-            "data": {"items": items, "grand_total_inr": round(grand_total, 2), "total_days": round(max_days, 2)},
-        }
+        return {"success": True, "msg": "Estimation complete", "data": _build_summary(items)}
 
     def get_estimation(self, project_id: uuid.UUID) -> dict:
         try:
-            items = (
+            estimations = (
                 self.db.query(ProjectEstimation)
                 .filter(ProjectEstimation.project_id == project_id)
                 .all()
             )
-            if not items:
+            if not estimations:
                 return {"success": False, "msg": "No estimation found", "data": None}
 
-            grand_total = sum(i.total_cost_inr for i in items)
-            total_days = max(i.estimated_days for i in items)
-            return {
-                "success": True,
-                "msg": "Estimation fetched",
-                "data": {
-                    "items": items,
-                    "grand_total_inr": round(grand_total, 2),
-                    "total_days": round(total_days, 2),
-                },
+            zone_map = {
+                z.id: z
+                for z in self.db.query(ProjectZone).filter(ProjectZone.project_id == project_id).all()
             }
+
+            items = []
+            for est in estimations:
+                material = get_material_by_id(est.material_id) or {}
+                # Re-derive the rate analysis from the stored inputs; the money
+                # values come straight off the persisted row so totals match.
+                costs = calculate_zone_cost(
+                    est.area_sqft, material, est.custom_unit_price_inr, est.custom_labour_rate_inr
+                ) if material else {}
+                items.append(_serialize_item(est, zone_map.get(est.zone_id), material, costs or _empty_costs(est)))
+
+            return {"success": True, "msg": "Estimation fetched", "data": _build_summary(items)}
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}

@@ -22,3 +22,8 @@ TASK_STATUS_FAILED = "failed"
 
 ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/jpg"}
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+# GST on works-contract / construction supply (composite rate). Applied on top
+# of the material + labour subtotal to present a realistic payable figure. The
+# per-zone catalog rates and the line-item math are unchanged by this.
+GST_RATE_PCT = 18.0

@@ -97,6 +97,9 @@ export const api = {
 
   getImages: (projectId) => request(`/api/v1/projects/${projectId}/images/`),
 
+  getEstimation: (projectId) =>
+    request(`/api/v1/projects/${projectId}/estimation/`),
+
   runEstimation: (projectId) =>
     request(`/api/v1/projects/${projectId}/estimation/run`, { method: 'POST' }),
 

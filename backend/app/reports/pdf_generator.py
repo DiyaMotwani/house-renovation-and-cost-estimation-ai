@@ -22,6 +22,11 @@ def generate_pdf_report(
     grand_total_inr: float,
     total_days: float,
     output_path: str,
+    material_subtotal_inr: float = 0.0,
+    labour_subtotal_inr: float = 0.0,
+    gst_pct: float = 0.0,
+    gst_amount_inr: float = 0.0,
+    total_payable_inr: float = 0.0,
     house_description: str = "",
     renovation_needs: list[str] | None = None,
     renovation_suggestions: list[str] | None = None,
@@ -88,31 +93,46 @@ def generate_pdf_report(
     pdf.ln(5)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Cost Breakdown", ln=True)
-    pdf.set_font("Helvetica", "B", 8)
-    col_w2 = [35, 40, 25, 30, 30, 30]
-    headers2 = ["Zone", "Material", "Qty", "Mat Cost", "Labour", "Total"]
+    pdf.cell(0, 10, "Cost Breakdown (Bill of Quantities)", ln=True)
+    pdf.set_font("Helvetica", "B", 7)
+    # Zone | Material | Qty | Rate | Material | Labour rate | Labour | Total
+    col_w2 = [28, 33, 22, 20, 26, 18, 23, 20]
+    headers2 = ["Zone", "Material", "Qty", "Rate", "Material", "Lab/sqft", "Labour", "Total"]
     for i, h in enumerate(headers2):
-        pdf.cell(col_w2[i], 8, h, border=1)
+        pdf.cell(col_w2[i], 8, h, border=1, align="C")
     pdf.ln()
-    pdf.set_font("Helvetica", "", 8)
+    pdf.set_font("Helvetica", "", 7)
     for row in cost_breakdown:
         material = get_material_by_id(row.get("material_id", ""))
         mat_name = material["name"] if material else row.get("material_id", "")
         qty_str = f"{row.get('qty_required', 0):.1f} {row.get('unit', '')}"
-        pdf.cell(col_w2[0], 8, str(row.get("zone_label", ""))[:18], border=1)
-        pdf.cell(col_w2[1], 8, mat_name[:20], border=1)
-        pdf.cell(col_w2[2], 8, qty_str[:12], border=1)
-        pdf.cell(col_w2[3], 8, f"{row.get('material_cost_inr', 0):,.0f}", border=1)
-        pdf.cell(col_w2[4], 8, f"{row.get('labour_cost_inr', 0):,.0f}", border=1)
-        pdf.cell(col_w2[5], 8, f"{row.get('total_cost_inr', 0):,.0f}", border=1)
+        unit_rate = row.get("applied_unit_price_inr") or 0
+        labour_rate = row.get("applied_labour_rate_inr") or 0
+        pdf.cell(col_w2[0], 7, str(row.get("zone_label", ""))[:16], border=1)
+        pdf.cell(col_w2[1], 7, mat_name[:19], border=1)
+        pdf.cell(col_w2[2], 7, qty_str[:11], border=1)
+        pdf.cell(col_w2[3], 7, f"{unit_rate:,.0f}", border=1, align="R")
+        pdf.cell(col_w2[4], 7, f"{row.get('material_cost_inr', 0):,.0f}", border=1, align="R")
+        pdf.cell(col_w2[5], 7, f"{labour_rate:,.0f}", border=1, align="R")
+        pdf.cell(col_w2[6], 7, f"{row.get('labour_cost_inr', 0):,.0f}", border=1, align="R")
+        pdf.cell(col_w2[7], 7, f"{row.get('total_cost_inr', 0):,.0f}", border=1, align="R")
         pdf.ln()
 
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(160, 10, "Grand Total", border=1)
-    pdf.cell(30, 10, f"INR {grand_total_inr:,.0f}", border=1, ln=True)
-    pdf.cell(160, 10, "Estimated Duration", border=1)
-    pdf.cell(30, 10, f"{total_days:.1f} days", border=1, ln=True)
+    pdf.ln(3)
+    label_w, val_w = 150, 40
+
+    def total_row(label: str, value: str, bold: bool = False):
+        pdf.set_font("Helvetica", "B" if bold else "", 9)
+        pdf.cell(label_w, 8, label, border=1)
+        pdf.cell(val_w, 8, value, border=1, align="R", ln=True)
+
+    total_row("Material subtotal", f"INR {material_subtotal_inr:,.0f}")
+    total_row("Labour subtotal", f"INR {labour_subtotal_inr:,.0f}")
+    total_row("Subtotal (Material + Labour)", f"INR {grand_total_inr:,.0f}", bold=True)
+    if gst_pct:
+        total_row(f"GST @ {gst_pct:.0f}%", f"INR {gst_amount_inr:,.0f}")
+        total_row("Total Payable (incl. GST)", f"INR {total_payable_inr:,.0f}", bold=True)
+    total_row("Estimated Duration", f"{total_days:.1f} working days", bold=True)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
