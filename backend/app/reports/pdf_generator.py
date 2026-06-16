@@ -41,8 +41,9 @@ def generate_pdf_report(
     pdf.cell(0, 10, project_name, ln=True, align="C")
     pdf.ln(5)
 
+    has_after = bool(generated_image_path) and Path(generated_image_path).exists()
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Before vs After", ln=True)
+    pdf.cell(0, 10, "Before vs After" if has_after else "Current House", ln=True)
     pdf.ln(2)
 
     img_width = 85
@@ -50,8 +51,14 @@ def generate_pdf_report(
 
     if Path(original_image_path).exists():
         pdf.image(original_image_path, x=10, y=y_start, w=img_width)
-    if Path(generated_image_path).exists():
+    if has_after:
         pdf.image(generated_image_path, x=105, y=y_start, w=img_width)
+    else:
+        pdf.set_xy(105, y_start + 28)
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(150, 150, 150)
+        pdf.multi_cell(img_width, 5, "Redesigned preview not generated yet.", align="C")
+        pdf.set_text_color(0, 0, 0)
 
     pdf.set_y(y_start + 65)
     pdf.ln(5)

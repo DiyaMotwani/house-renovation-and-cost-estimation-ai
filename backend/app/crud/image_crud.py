@@ -148,11 +148,13 @@ class ImageCRUD:
         file_path: str,
         mime_type: str = "image/png",
         file_size_kb: int | None = None,
+        variant_id: uuid.UUID | None = None,
     ) -> dict:
         try:
             image = ProjectImage(
                 id=uuid.uuid4(),
                 project_id=project_id,
+                variant_id=variant_id,
                 image_type=image_type,
                 file_path=file_path,
                 mime_type=mime_type,
@@ -165,6 +167,37 @@ class ImageCRUD:
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
+
+    def clear_generated_for_variant(self, project_id: uuid.UUID, variant_id: uuid.UUID) -> None:
+        """Re-generating a variant should replace only that variant's preview."""
+        stale = (
+            self.db.query(ProjectImage)
+            .filter(
+                ProjectImage.project_id == project_id,
+                ProjectImage.image_type == IMAGE_TYPE_GENERATED,
+                ProjectImage.variant_id == variant_id,
+            )
+            .all()
+        )
+        for image in stale:
+            delete_file(image.file_path)
+            self.db.delete(image)
+        self.db.flush()
+
+    def get_generated_for_variant(self, project_id: uuid.UUID, variant_id: uuid.UUID) -> dict:
+        image = (
+            self.db.query(ProjectImage)
+            .filter(
+                ProjectImage.project_id == project_id,
+                ProjectImage.image_type == IMAGE_TYPE_GENERATED,
+                ProjectImage.variant_id == variant_id,
+            )
+            .order_by(ProjectImage.uploaded_at.desc())
+            .first()
+        )
+        if not image:
+            return {"success": False, "msg": "No generated image for this variant", "data": None}
+        return {"success": True, "msg": "Image fetched", "data": image}
 
     def delete_image(self, project_id: uuid.UUID, image_id: uuid.UUID) -> dict:
         try:

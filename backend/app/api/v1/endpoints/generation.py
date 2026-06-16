@@ -4,21 +4,28 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.deps import verify_project_owner
 from app.crud.estimation_crud import GenerationCRUD
 from app.db.session import get_db
 from app.schemas.task_schema import GenerationStatusResponseSchema, TaskStatusResponseSchema
 
-router = APIRouter(prefix="/projects/{project_id}/generate", tags=["generation"])
+router = APIRouter(
+    prefix="/projects/{project_id}/generate",
+    tags=["generation"],
+    dependencies=[Depends(verify_project_owner)],
+)
 
 
 class GenerationTriggerSchema(BaseModel):
     mask_image_path: str | None = None
     zone_context: str | None = None
+    variant_id: UUID | None = None
 
 
 @router.post("/")
 def trigger_generation(project_id: UUID, payload: GenerationTriggerSchema | None = None, db: Session = Depends(get_db)):
-    return GenerationCRUD(db).trigger_generation(project_id, payload.model_dump() if payload else {})
+    options = payload.model_dump(mode="json") if payload else {}
+    return GenerationCRUD(db).trigger_generation(project_id, options)
 
 
 @router.get("/status")

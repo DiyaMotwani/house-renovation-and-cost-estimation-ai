@@ -16,26 +16,33 @@ class ReportCRUD:
     def __init__(self, db: Session):
         self.db = db
 
-    def generate_report(self, project_id: uuid.UUID) -> dict:
+    def generate_report(self, project_id: uuid.UUID, variant_id: uuid.UUID | None = None) -> dict:
         try:
+            from app.crud.variant_crud import VariantCRUD
+
             project_crud = ProjectCRUD(self.db)
             project_result = project_crud.get_project(project_id)
             if not project_result["success"]:
                 return project_result
             project = project_result["data"]
 
+            variant_id = VariantCRUD(self.db).resolve_variant_id(project_id, variant_id)
+
             estimation_crud = EstimationCRUD(self.db)
-            est_result = estimation_crud.get_estimation(project_id)
+            est_result = estimation_crud.get_estimation(project_id, variant_id)
             if not est_result["success"]:
-                est_result = estimation_crud.run_estimation(project_id)
+                est_result = estimation_crud.run_estimation(project_id, variant_id)
                 if not est_result["success"]:
                     return est_result
 
             image_crud = ImageCRUD(self.db)
             original = image_crud.get_image_by_type(project_id, "original")
-            generated = image_crud.get_image_by_type(project_id, "generated")
-            if not original["success"] or not generated["success"]:
-                return {"success": False, "msg": "Before/after images required", "data": None}
+            if not original["success"]:
+                return {"success": False, "msg": "Upload a house photo before generating a report", "data": None}
+            # The redesigned image is optional: degrade gracefully to a
+            # before-only report if the user has not generated a preview yet.
+            generated = image_crud.get_generated_for_variant(project_id, variant_id)
+            generated_path = generated["data"].file_path if generated["success"] else None
 
             summary = est_result["data"]
             zones_summary = []
@@ -68,7 +75,7 @@ class ReportCRUD:
             generate_pdf_report(
                 project_name=project.name,
                 original_image_path=original["data"].file_path,
-                generated_image_path=generated["data"].file_path,
+                generated_image_path=generated_path,
                 zones_summary=zones_summary,
                 cost_breakdown=cost_breakdown,
                 grand_total_inr=summary["grand_total_inr"],

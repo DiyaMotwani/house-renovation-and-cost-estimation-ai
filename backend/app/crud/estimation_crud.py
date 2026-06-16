@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.catalog.loader import get_material_by_id
@@ -13,8 +14,10 @@ from app.core.constants import (
 )
 from app.crud.image_crud import ImageCRUD
 from app.crud.project_crud import ProjectCRUD
+from app.crud.variant_crud import VariantCRUD
 from app.crud.zone_crud import ZoneCRUD
 from app.models.renovation_models import ProjectEstimation, ProjectZone, TaskRecord
+from app.utils.area_estimator import derive_area_basis
 from app.utils.cost_calculator import calculate_zone_cost
 
 
@@ -88,37 +91,44 @@ class EstimationCRUD:
     def __init__(self, db: Session):
         self.db = db
 
-    def run_estimation(self, project_id: uuid.UUID) -> dict:
+    def run_estimation(self, project_id: uuid.UUID, variant_id: uuid.UUID | None = None) -> dict:
         try:
-            return self._calculate(project_id, overrides=[])
+            return self._calculate(project_id, overrides=[], variant_id=variant_id)
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def recalculate(self, project_id: uuid.UUID, overrides: list[dict]) -> dict:
+    def recalculate(self, project_id: uuid.UUID, overrides: list[dict], variant_id: uuid.UUID | None = None) -> dict:
         try:
-            return self._calculate(project_id, overrides=overrides)
+            return self._calculate(project_id, overrides=overrides, variant_id=variant_id)
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def _calculate(self, project_id: uuid.UUID, overrides: list[dict]) -> dict:
+    def _calculate(self, project_id: uuid.UUID, overrides: list[dict], variant_id: uuid.UUID | None = None) -> dict:
         project_crud = ProjectCRUD(self.db)
         project_result = project_crud.get_project(project_id)
         if not project_result["success"]:
             return project_result
         project = project_result["data"]
 
+        variant_id = VariantCRUD(self.db).resolve_variant_id(project_id, variant_id)
         override_map = {o["zone_id"]: o for o in overrides}
 
         zones = (
             self.db.query(ProjectZone)
-            .options(joinedload(ProjectZone.material_assignment))
+            .options(joinedload(ProjectZone.material_assignments))
             .filter(ProjectZone.project_id == project_id)
             .all()
         )
 
-        self.db.query(ProjectEstimation).filter(ProjectEstimation.project_id == project_id).delete()
+        # Clear this variant's prior lines AND any legacy rows that predate
+        # variants (variant_id NULL), so a recalculation never leaves stale or
+        # duplicate rows behind (e.g. from a double-invoked request).
+        self.db.query(ProjectEstimation).filter(
+            ProjectEstimation.project_id == project_id,
+            or_(ProjectEstimation.variant_id == variant_id, ProjectEstimation.variant_id.is_(None)),
+        ).delete(synchronize_session=False)
 
         # Stamp every line with one consistent timestamp. Serializing from this
         # in-memory value (instead of re-reading the row after commit) keeps the
@@ -127,25 +137,14 @@ class EstimationCRUD:
         items = []
 
         for zone in zones:
-            if not zone.material_assignment:
+            assignment = next((a for a in zone.material_assignments if a.variant_id == variant_id), None)
+            if not assignment:
                 return {"success": False, "msg": f"No material for zone: {zone.label}", "data": None}
-            material = get_material_by_id(zone.material_assignment.material_id)
+            material = get_material_by_id(assignment.material_id)
             if not material:
                 return {"success": False, "msg": f"Material not found", "data": None}
 
-            area = (zone.estimated_sqft or 0) * project.scale_factor
-            anchor = "explicit_zone_area"
-            confidence = 1.0
-            reasoning = "Zone detected area used directly."
-            if area <= 0:
-                hints = project.dimension_hints or {}
-                estimated_width = float(hints.get("estimated_front_width_ft") or 24)
-                floor_height = float(hints.get("estimated_floor_height_ft") or 10)
-                floors = max(1, int(project.num_floors or 2))
-                area = max(120, estimated_width * floor_height * floors * 0.75)
-                anchor = hints.get("detected_reference_object") or "geo_average"
-                confidence = float(hints.get("confidence") or 0.35)
-                reasoning = hints.get("reasoning") or "Estimated via architecture and reference priors."
+            area, anchor, confidence, reasoning = derive_area_basis(project, zone)
             override = override_map.get(zone.id, {})
             custom_unit = override.get("custom_unit_price_inr")
             custom_labour = override.get("custom_labour_rate_inr")
@@ -155,6 +154,7 @@ class EstimationCRUD:
             estimation = ProjectEstimation(
                 id=uuid.uuid4(),
                 project_id=project_id,
+                variant_id=variant_id,
                 zone_id=zone.id,
                 material_id=material["id"],
                 area_sqft=costs["area_sqft"],
@@ -179,11 +179,15 @@ class EstimationCRUD:
 
         return {"success": True, "msg": "Estimation complete", "data": _build_summary(items)}
 
-    def get_estimation(self, project_id: uuid.UUID) -> dict:
+    def get_estimation(self, project_id: uuid.UUID, variant_id: uuid.UUID | None = None) -> dict:
         try:
+            variant_id = VariantCRUD(self.db).resolve_variant_id(project_id, variant_id)
             estimations = (
                 self.db.query(ProjectEstimation)
-                .filter(ProjectEstimation.project_id == project_id)
+                .filter(
+                    ProjectEstimation.project_id == project_id,
+                    ProjectEstimation.variant_id == variant_id,
+                )
                 .all()
             )
             if not estimations:
@@ -195,7 +199,13 @@ class EstimationCRUD:
             }
 
             items = []
+            seen_zones = set()
             for est in estimations:
+                # Defensive dedupe: exactly one line per zone even if stray
+                # duplicate rows exist, so the total is always consistent.
+                if est.zone_id in seen_zones:
+                    continue
+                seen_zones.add(est.zone_id)
                 material = get_material_by_id(est.material_id) or {}
                 # Re-derive the rate analysis from the stored inputs; the money
                 # values come straight off the persisted row so totals match.
@@ -218,19 +228,21 @@ class GenerationCRUD:
         try:
             from app.workers.ai_worker import task_generate_renovation
 
+            options = options or {}
+            variant_id = VariantCRUD(self.db).resolve_variant_id(project_id, options.get("variant_id"))
+
             image_crud = ImageCRUD(self.db)
             image_result = image_crud.get_image_by_type(project_id, "original")
             if not image_result["success"]:
                 return image_result
 
             zone_crud = ZoneCRUD(self.db)
-            assignments_result = zone_crud.get_zone_assignments_for_generation(project_id)
+            assignments_result = zone_crud.get_zone_assignments_for_generation(project_id, variant_id)
             if not assignments_result["success"]:
                 return assignments_result
 
             project_result = ProjectCRUD(self.db).get_project(project_id)
             project = project_result["data"] if project_result["success"] else None
-            options = options or {}
             generation_context = {
                 "house_description": getattr(project, "house_description", "") or "",
                 "zone_context": options.get("zone_context", ""),
@@ -242,6 +254,7 @@ class GenerationCRUD:
                 assignments_result["data"],
                 options.get("mask_image_path"),
                 generation_context,
+                str(variant_id),
             )
 
             task = TaskRecord(

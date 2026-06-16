@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ImageResponseSchema(BaseModel):
     id: UUID
     project_id: UUID
+    variant_id: UUID | None = None
     image_type: str
     file_path: str
     mime_type: str

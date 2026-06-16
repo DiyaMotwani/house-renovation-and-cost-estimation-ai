@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../services/api';
 import { Alert, Spinner, StepHeader } from '../ui/kit';
+import VariantBar from '../variants/VariantBar';
 
 export default function ReportStep({ projectId }) {
   const [status, setStatus] = useState('idle');
@@ -11,6 +12,13 @@ export default function ReportStep({ projectId }) {
   useEffect(() => {
     api.getProjectAnalysis(projectId).then((res) => setAnalysis(res.data)).catch(() => {});
   }, [projectId]);
+
+  // Switching the active design lets the user report a different one.
+  const onVariantChanged = () => {
+    setStatus('idle');
+    setReport(null);
+    setError(null);
+  };
 
   const handleGenerate = async () => {
     setError(null);
@@ -32,8 +40,10 @@ export default function ReportStep({ projectId }) {
         index={5}
         total={5}
         title="Your renovation report"
-        subtitle="Generate a shareable PDF with before/after images, materials, quantities and the full cost breakdown — ready to discuss with contractors."
+        subtitle="Generate a shareable PDF for the active design — before/after images, materials, quantities and the full cost breakdown. Switch designs below to report a different one."
       />
+
+      <VariantBar projectId={projectId} onChanged={onVariantChanged} />
 
       {analysis?.house_description && (
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-600 shadow-card">

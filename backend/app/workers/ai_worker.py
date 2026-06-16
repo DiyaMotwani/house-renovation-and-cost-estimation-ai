@@ -124,10 +124,12 @@ def task_generate_renovation(
     zone_assignments: list,
     mask_path: str | None = None,
     generation_context: dict | None = None,
+    variant_id: str | None = None,
 ):
     db = SessionLocal()
     try:
         pid = uuid.UUID(project_id)
+        vid = uuid.UUID(variant_id) if variant_id else None
         task_crud = TaskCRUD(db)
         project_crud = ProjectCRUD(db)
         image_crud = ImageCRUD(db)
@@ -139,7 +141,7 @@ def task_generate_renovation(
         house_context = generation_context.get("house_description", "")
         zone_context = generation_context.get("zone_context", "")
         prompt = masked_generation_prompt(prompt, zone_context, house_context)
-        output_path = get_generated_output_path(project_id)
+        output_path = get_generated_output_path(project_id, variant_id)
         generation_meta = generate_image(
             image_path=image_path,
             prompt=prompt,
@@ -149,7 +151,9 @@ def task_generate_renovation(
         )
 
         gen_size = Path(generation_meta["output_path"]).stat().st_size // 1024
-        image_crud.create_image_record(pid, IMAGE_TYPE_GENERATED, output_path, "image/png", gen_size)
+        if vid:
+            image_crud.clear_generated_for_variant(pid, vid)
+        image_crud.create_image_record(pid, IMAGE_TYPE_GENERATED, output_path, "image/png", gen_size, variant_id=vid)
 
         project_crud.update_status(pid, PROJECT_STATUS_GENERATION_COMPLETE)
 

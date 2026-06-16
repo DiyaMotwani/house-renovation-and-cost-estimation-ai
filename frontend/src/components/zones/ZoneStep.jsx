@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../services/api';
 import { Alert, Spinner, StepHeader } from '../ui/kit';
+import VariantBar from '../variants/VariantBar';
 
 export default function ZoneStep({ projectId, suggestions, analysis, onComplete }) {
   const [zones, setZones] = useState([]);
   const [materials, setMaterials] = useState([]);
   const [selections, setSelections] = useState({});
   const [sqftOverrides, setSqftOverrides] = useState({});
+  const [labels, setLabels] = useState({});
   const [frontWidth, setFrontWidth] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -27,19 +29,21 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
 
       const suggestionMap = {};
       (suggestions?.suggestions || []).forEach((s) => {
-        if (s.recommended_material_ids?.[0]) {
-          suggestionMap[s.zone_key] = s.recommended_material_ids[0];
-        }
+        if (s.recommended_material_ids?.[0]) suggestionMap[s.zone_key] = s.recommended_material_ids[0];
       });
 
       const initial = {};
       const sqftInit = {};
+      const labelInit = {};
       zoneList.forEach((z) => {
-        initial[z.id] = suggestionMap[z.zone_key] || mats[0]?.id || '';
+        // Prefer the material already assigned to this design variant.
+        initial[z.id] = z.material_assignment?.material_id || suggestionMap[z.zone_key] || mats[0]?.id || '';
         sqftInit[z.id] = z.estimated_sqft ?? '';
+        labelInit[z.id] = z.label;
       });
       setSelections(initial);
       setSqftOverrides(sqftInit);
+      setLabels(labelInit);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -51,23 +55,45 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
     loadZones();
   }, [loadZones]);
 
+  const addZone = async () => {
+    setError(null);
+    try {
+      const res = await api.createZone(projectId, { label: 'New zone', estimated_sqft: 100 });
+      const z = res.data;
+      // Append in place (no full reload) so the page doesn't jump to the top.
+      setZones((p) => [...p, z]);
+      setSelections((p) => ({ ...p, [z.id]: materials[0]?.id || '' }));
+      setSqftOverrides((p) => ({ ...p, [z.id]: z.estimated_sqft ?? '' }));
+      setLabels((p) => ({ ...p, [z.id]: z.label }));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const removeZone = async (zoneId) => {
+    setError(null);
+    try {
+      await api.deleteZone(projectId, zoneId);
+      // Remove in place — keeps scroll position, no spinner flash.
+      setZones((p) => p.filter((z) => z.id !== zoneId));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const handleSubmit = async () => {
     setError(null);
     setSubmitting(true);
     try {
       for (const zone of zones) {
         const sqft = parseFloat(sqftOverrides[zone.id]);
-        if (!isNaN(sqft) && sqft !== zone.estimated_sqft) {
-          await api.updateZone(projectId, zone.id, sqft);
-        }
+        const fields = {};
+        if (!isNaN(sqft) && sqft !== zone.estimated_sqft) fields.estimated_sqft = sqft;
+        if (labels[zone.id] && labels[zone.id] !== zone.label) fields.label = labels[zone.id];
+        if (Object.keys(fields).length) await api.updateZone(projectId, zone.id, fields);
       }
-      if (frontWidth) {
-        await api.setScaleAnchor(projectId, parseFloat(frontWidth));
-      }
-      const assignments = zones.map((z) => ({
-        zone_id: z.id,
-        material_id: selections[z.id],
-      }));
+      if (frontWidth) await api.setScaleAnchor(projectId, parseFloat(frontWidth));
+      const assignments = zones.map((z) => ({ zone_id: z.id, material_id: selections[z.id] }));
       await api.assignMaterials(projectId, assignments);
       onComplete();
     } catch (e) {
@@ -92,17 +118,10 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
         index={2}
         total={5}
         title="Zones & materials"
-        subtitle="Review the surfaces our AI detected, fine-tune areas if needed, and assign a finishing material to each zone."
+        subtitle="Review the surfaces our AI detected, correct any that are off (rename, resize, add or remove), then assign a finishing material to each. Materials apply to the active design."
       />
 
-      <div className="mb-6 flex flex-wrap gap-3">
-        {suggestions?.overall_style && (
-          <span className="pill bg-brand-50 text-brand-700">
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor"><path d="M12 2l2.4 6.9L21 9.2l-5.4 4 2 6.8L12 16.6 6.4 20l2-6.8L3 9.2l6.6-.3z" /></svg>
-            Suggested style: {suggestions.overall_style}
-          </span>
-        )}
-      </div>
+      <VariantBar projectId={projectId} onChanged={loadZones} />
 
       {analysis?.renovation_needs?.length > 0 && (
         <div className="mb-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 to-white p-5">
@@ -123,10 +142,8 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
 
       {zones.length === 0 && (
         <Alert variant="warning" className="mb-6" title="No zones found for this project">
-          <p>Go back and re-upload a clear house exterior photo, or retry loading.</p>
-          <button type="button" onClick={loadZones} className="btn-secondary mt-3 py-1.5">
-            Retry
-          </button>
+          <p>Re-upload a clearer photo, retry, or add a zone manually below.</p>
+          <button type="button" onClick={loadZones} className="btn-secondary mt-3 py-1.5">Retry</button>
         </Alert>
       )}
 
@@ -141,20 +158,24 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
             placeholder="e.g. 30"
           />
         </div>
-        <p className="pb-3 text-xs text-slate-500">
-          Optional — improves area accuracy by calibrating scale to a real-world measurement.
-        </p>
+        <p className="pb-3 text-xs text-slate-500">Optional — calibrates area estimates to a real measurement.</p>
       </div>
 
       <div className="space-y-4">
-        {zones.map((zone) => {
+        {zones.map((zone, i) => {
           const reason = (suggestions?.suggestions || []).find((s) => s.zone_key === zone.zone_key)?.reason;
           return (
             <div key={zone.id} className="card p-5 transition hover:shadow-card-hover">
               <div className="flex flex-wrap items-end gap-4">
                 <div className="min-w-[200px] flex-1">
-                  <h3 className="font-semibold text-slate-800">{zone.label}</h3>
-                  {zone.description && <p className="mt-0.5 text-sm text-slate-500">{zone.description}</p>}
+                  <div className="flex items-center gap-2">
+                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">{i + 1}</span>
+                    <input
+                      value={labels[zone.id] ?? ''}
+                      onChange={(e) => setLabels((p) => ({ ...p, [zone.id]: e.target.value }))}
+                      className="input py-1.5 font-semibold"
+                    />
+                  </div>
                   {reason && (
                     <p className="mt-2 inline-flex items-start gap-1.5 rounded-lg bg-brand-50 px-2.5 py-1 text-xs text-brand-700">
                       <svg viewBox="0 0 24 24" className="mt-0.5 h-3 w-3 shrink-0" fill="currentColor"><path d="M12 2l2.4 6.9L21 9.2l-5.4 4 2 6.8L12 16.6 6.4 20l2-6.8L3 9.2l6.6-.3z" /></svg>
@@ -171,7 +192,7 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
                     className="input w-28 py-2"
                   />
                 </div>
-                <div className="min-w-[220px]">
+                <div className="min-w-[200px]">
                   <label className="mb-1 block text-xs font-medium text-slate-500">Material</label>
                   <select
                     value={selections[zone.id] || ''}
@@ -183,11 +204,24 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
                     ))}
                   </select>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => removeZone(zone.id)}
+                  title="Remove zone"
+                  className="mb-1 grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-400 transition hover:border-rose-300 hover:text-rose-500"
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
+                </button>
               </div>
             </div>
           );
         })}
       </div>
+
+      <button type="button" onClick={addZone} className="btn-secondary mt-4">
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+        Add zone
+      </button>
 
       {error && <Alert variant="error" className="mt-5">{error}</Alert>}
 
@@ -196,9 +230,7 @@ export default function ZoneStep({ projectId, suggestions, analysis, onComplete 
           {submitting && <Spinner />}
           {submitting ? 'Saving…' : 'Save & Generate Preview'}
           {!submitting && (
-            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
           )}
         </button>
       </div>

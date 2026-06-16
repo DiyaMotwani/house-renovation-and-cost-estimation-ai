@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../services/api';
 import { Alert, Spinner, StepHeader } from '../ui/kit';
+import VariantBar from '../variants/VariantBar';
 
 const inr = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
@@ -46,28 +47,39 @@ export default function EstimationStep({ projectId, onComplete }) {
     }
   };
 
-  useEffect(() => {
-    const init = async () => {
+  const init = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Load a previously saved estimate (keeps any rate overrides) if one
+      // exists; otherwise run a fresh calculation for the active variant.
+      let res;
       try {
-        // Load a previously saved estimate (keeps any rate overrides) if one
-        // exists; otherwise run a fresh calculation for the first time.
-        let res;
-        try {
-          res = await api.getEstimation(projectId);
-        } catch {
-          res = await api.runEstimation(projectId);
-        }
-        if (!res.success) throw new Error(res.msg);
-        applySummary(res.data);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
+        res = await api.getEstimation(projectId);
+      } catch {
+        res = await api.runEstimation(projectId);
       }
-    };
+      if (!res.success) throw new Error(res.msg);
+      applySummary(res.data);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
     init();
     return () => clearTimeout(debounceRef.current);
-  }, [projectId]);
+  }, [init]);
+
+  // Switching the active design reloads its own materials, overrides and totals.
+  const onVariantChanged = () => {
+    initialized.current = false;
+    setSummary(null);
+    setRateInputs({});
+    init();
+  };
 
   const recalculate = async (inputs) => {
     const items = summary?.items || [];
@@ -109,15 +121,6 @@ export default function EstimationStep({ projectId, onComplete }) {
     recalculate(rateInputsRef.current);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-3 py-24 text-slate-500">
-        <Spinner className="h-5 w-5 text-brand-600" />
-        Preparing your cost estimate…
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-6xl">
       <div className="flex items-start justify-between gap-4">
@@ -125,7 +128,7 @@ export default function EstimationStep({ projectId, onComplete }) {
           index={4}
           total={5}
           title="Cost estimation"
-          subtitle="An indicative Bill of Quantities. Edit any unit rate or labour rate to recalculate instantly; clear a field to restore the standard rate."
+          subtitle="An indicative Bill of Quantities for the active design. Edit any unit rate or labour rate to recalculate instantly; clear a field to restore the standard rate."
         />
         {recalculating && (
           <span className="pill mt-1 shrink-0 bg-brand-50 text-brand-700">
@@ -135,9 +138,18 @@ export default function EstimationStep({ projectId, onComplete }) {
         )}
       </div>
 
+      <VariantBar projectId={projectId} onChanged={onVariantChanged} />
+
       {error && <Alert variant="error" className="mb-4">{error}</Alert>}
 
-      {summary && (
+      {loading && (
+        <div className="flex items-center justify-center gap-3 py-20 text-slate-500">
+          <Spinner className="h-5 w-5 text-brand-600" />
+          Preparing your cost estimate…
+        </div>
+      )}
+
+      {!loading && summary && (
         <>
           <div className="card overflow-hidden p-0">
             <div className="overflow-x-auto">

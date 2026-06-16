@@ -5,7 +5,18 @@ from pydantic import BaseModel, Field
 
 
 class UpdateZoneSchema(BaseModel):
-    estimated_sqft: float = Field(..., gt=0)
+    label: str | None = None
+    description: str | None = None
+    estimated_sqft: float | None = Field(default=None, gt=0)
+    box_2d: dict | None = None
+
+
+class CreateZoneSchema(BaseModel):
+    label: str
+    zone_key: str | None = None
+    description: str | None = None
+    estimated_sqft: float | None = Field(default=None, gt=0)
+    box_2d: dict | None = None
 
 
 class ZoneMaterialAssignmentSchema(BaseModel):

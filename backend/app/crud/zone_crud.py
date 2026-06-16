@@ -3,28 +3,39 @@ import uuid
 from sqlalchemy.orm import Session, joinedload
 
 from app.catalog.loader import get_material_by_id
+from app.crud.variant_crud import VariantCRUD
 from app.models.renovation_models import ProjectZone, ZoneMaterialAssignment
 
 
 class ZoneCRUD:
     def __init__(self, db: Session):
         self.db = db
+        self.variants = VariantCRUD(db)
 
-    def list_zones(self, project_id: uuid.UUID) -> dict:
+    def _attach_assignment(self, zones: list[ProjectZone], variant_id: uuid.UUID) -> None:
+        """Expose the assignment for the chosen variant as `zone.material_assignment`
+        so the response schema keeps its simple single-assignment shape."""
+        for zone in zones:
+            match = next((a for a in zone.material_assignments if a.variant_id == variant_id), None)
+            zone.material_assignment = match
+
+    def list_zones(self, project_id: uuid.UUID, variant_id: uuid.UUID | None = None) -> dict:
         try:
+            variant_id = self.variants.resolve_variant_id(project_id, variant_id)
             zones = (
                 self.db.query(ProjectZone)
-                .options(joinedload(ProjectZone.material_assignment))
+                .options(joinedload(ProjectZone.material_assignments))
                 .filter(ProjectZone.project_id == project_id)
                 .order_by(ProjectZone.display_order)
                 .all()
             )
+            self._attach_assignment(zones, variant_id)
             return {"success": True, "msg": "Zones fetched", "data": zones}
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def update_zone(self, project_id: uuid.UUID, zone_id: uuid.UUID, estimated_sqft: float) -> dict:
+    def update_zone(self, project_id: uuid.UUID, zone_id: uuid.UUID, fields: dict) -> dict:
         try:
             zone = (
                 self.db.query(ProjectZone)
@@ -33,10 +44,57 @@ class ZoneCRUD:
             )
             if not zone:
                 return {"success": False, "msg": "Zone not found", "data": None}
-            zone.estimated_sqft = estimated_sqft
+            for attr in ("label", "description", "estimated_sqft", "box_2d"):
+                if attr in fields and fields[attr] is not None:
+                    setattr(zone, attr, fields[attr])
             self.db.commit()
             self.db.refresh(zone)
+            zone.material_assignment = None
             return {"success": True, "msg": "Zone updated", "data": zone}
+        except Exception as e:
+            self.db.rollback()
+            return {"success": False, "msg": str(e), "data": None}
+
+    def create_zone(self, project_id: uuid.UUID, data: dict) -> dict:
+        """Manually add a zone the detector missed (requirement 5.2)."""
+        try:
+            max_order = (
+                self.db.query(ProjectZone)
+                .filter(ProjectZone.project_id == project_id)
+                .count()
+            )
+            label = data.get("label") or "New zone"
+            zone = ProjectZone(
+                id=uuid.uuid4(),
+                project_id=project_id,
+                zone_key=data.get("zone_key") or f"custom_{uuid.uuid4().hex[:6]}",
+                label=label,
+                description=data.get("description"),
+                estimated_sqft=data.get("estimated_sqft"),
+                box_2d=data.get("box_2d"),
+                display_order=max_order,
+            )
+            self.db.add(zone)
+            self.db.commit()
+            self.db.refresh(zone)
+            zone.material_assignment = None
+            return {"success": True, "msg": "Zone created", "data": zone}
+        except Exception as e:
+            self.db.rollback()
+            return {"success": False, "msg": str(e), "data": None}
+
+    def delete_zone(self, project_id: uuid.UUID, zone_id: uuid.UUID) -> dict:
+        try:
+            zone = (
+                self.db.query(ProjectZone)
+                .filter(ProjectZone.id == zone_id, ProjectZone.project_id == project_id)
+                .first()
+            )
+            if not zone:
+                return {"success": False, "msg": "Zone not found", "data": None}
+            self.db.delete(zone)
+            self.db.commit()
+            return {"success": True, "msg": "Zone deleted", "data": {"id": str(zone_id)}}
         except Exception as e:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
@@ -68,8 +126,11 @@ class ZoneCRUD:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def bulk_assign_materials(self, project_id: uuid.UUID, assignments: list[dict]) -> dict:
+    def bulk_assign_materials(
+        self, project_id: uuid.UUID, assignments: list[dict], variant_id: uuid.UUID | None = None
+    ) -> dict:
         try:
+            variant_id = self.variants.resolve_variant_id(project_id, variant_id)
             results = []
             for item in assignments:
                 zone_id = item["zone_id"]
@@ -87,7 +148,10 @@ class ZoneCRUD:
 
                 existing = (
                     self.db.query(ZoneMaterialAssignment)
-                    .filter(ZoneMaterialAssignment.zone_id == zone_id)
+                    .filter(
+                        ZoneMaterialAssignment.zone_id == zone_id,
+                        ZoneMaterialAssignment.variant_id == variant_id,
+                    )
                     .first()
                 )
                 if existing:
@@ -97,6 +161,7 @@ class ZoneCRUD:
                     assignment = ZoneMaterialAssignment(
                         id=uuid.uuid4(),
                         zone_id=zone_id,
+                        variant_id=variant_id,
                         material_id=material_id,
                     )
                     self.db.add(assignment)
@@ -110,11 +175,18 @@ class ZoneCRUD:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def assign_material(self, project_id: uuid.UUID, zone_id: uuid.UUID, material_id: str) -> dict:
-        return self.bulk_assign_materials(project_id, [{"zone_id": zone_id, "material_id": material_id}])
+    def assign_material(
+        self, project_id: uuid.UUID, zone_id: uuid.UUID, material_id: str, variant_id: uuid.UUID | None = None
+    ) -> dict:
+        return self.bulk_assign_materials(
+            project_id, [{"zone_id": zone_id, "material_id": material_id}], variant_id
+        )
 
-    def remove_material(self, project_id: uuid.UUID, zone_id: uuid.UUID) -> dict:
+    def remove_material(
+        self, project_id: uuid.UUID, zone_id: uuid.UUID, variant_id: uuid.UUID | None = None
+    ) -> dict:
         try:
+            variant_id = self.variants.resolve_variant_id(project_id, variant_id)
             zone = (
                 self.db.query(ProjectZone)
                 .filter(ProjectZone.id == zone_id, ProjectZone.project_id == project_id)
@@ -125,7 +197,10 @@ class ZoneCRUD:
 
             assignment = (
                 self.db.query(ZoneMaterialAssignment)
-                .filter(ZoneMaterialAssignment.zone_id == zone_id)
+                .filter(
+                    ZoneMaterialAssignment.zone_id == zone_id,
+                    ZoneMaterialAssignment.variant_id == variant_id,
+                )
                 .first()
             )
             if not assignment:
@@ -138,27 +213,33 @@ class ZoneCRUD:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def get_zone_assignments_for_generation(self, project_id: uuid.UUID) -> dict:
+    def get_zone_assignments_for_generation(
+        self, project_id: uuid.UUID, variant_id: uuid.UUID | None = None
+    ) -> dict:
         try:
+            variant_id = self.variants.resolve_variant_id(project_id, variant_id)
             zones = (
                 self.db.query(ProjectZone)
-                .options(joinedload(ProjectZone.material_assignment))
+                .options(joinedload(ProjectZone.material_assignments))
                 .filter(ProjectZone.project_id == project_id)
                 .all()
             )
             assignments = []
             for zone in zones:
-                if not zone.material_assignment:
+                assignment = next(
+                    (a for a in zone.material_assignments if a.variant_id == variant_id), None
+                )
+                if not assignment:
                     return {
                         "success": False,
                         "msg": f"No material assigned for zone: {zone.label}",
                         "data": None,
                     }
-                material = get_material_by_id(zone.material_assignment.material_id)
+                material = get_material_by_id(assignment.material_id)
                 if not material:
                     return {
                         "success": False,
-                        "msg": f"Material not found: {zone.material_assignment.material_id}",
+                        "msg": f"Material not found: {assignment.material_id}",
                         "data": None,
                     }
                 assignments.append(

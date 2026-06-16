@@ -3,11 +3,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
+from app.api.deps import verify_project_owner
 from app.crud.image_crud import ImageCRUD
 from app.db.session import get_db
 from app.schemas.image_schema import ImageResponseSchema
 
-router = APIRouter(prefix="/projects/{project_id}/images", tags=["images"])
+router = APIRouter(
+    prefix="/projects/{project_id}/images",
+    tags=["images"],
+    dependencies=[Depends(verify_project_owner)],
+)
 
 
 @router.post("/upload")

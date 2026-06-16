@@ -16,7 +16,15 @@ export function useTaskPoller(taskId, { intervalMs = 3000, onComplete, onFailed 
   }, [onComplete, onFailed]);
 
   useEffect(() => {
-    if (!taskId) return undefined;
+    if (!taskId) {
+      // No active task — clear any leftover status so consumers don't read a
+      // stale 'pending'/'processing' from a previous task.
+      setStatus(null);
+      setResult(null);
+      setError(null);
+      setLoading(false);
+      return undefined;
+    }
 
     let stopped = false;
     let timeoutId = null;

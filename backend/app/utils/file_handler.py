@@ -41,8 +41,10 @@ def get_sketch_output_path(project_id: str) -> str:
     return str(settings.generated_dir / f"{project_id}_sketch.png")
 
 
-def get_generated_output_path(project_id: str) -> str:
+def get_generated_output_path(project_id: str, variant_id: str | None = None) -> str:
     ensure_storage_dirs()
+    if variant_id:
+        return str(settings.generated_dir / f"{project_id}_{variant_id}_generated.png")
     return str(settings.generated_dir / f"{project_id}_generated.png")
 
 

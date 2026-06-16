@@ -10,11 +10,12 @@ class ProjectCRUD:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_project(self, name: str) -> dict:
+    def create_project(self, name: str, owner_token: str | None = None) -> dict:
         try:
             project = Project(
                 id=uuid.uuid4(),
                 name=name,
+                owner_token=owner_token,
                 status=PROJECT_STATUS_CREATED,
                 scale_factor=1.0,
             )
@@ -26,9 +27,14 @@ class ProjectCRUD:
             self.db.rollback()
             return {"success": False, "msg": str(e), "data": None}
 
-    def list_projects(self) -> dict:
+    def list_projects(self, owner_token: str | None = None) -> dict:
         try:
-            projects = self.db.query(Project).order_by(Project.created_at.desc()).all()
+            query = self.db.query(Project)
+            # Each browser session only sees its own projects. Legacy projects
+            # (owner_token IS NULL) stay hidden from token-scoped sessions.
+            if owner_token:
+                query = query.filter(Project.owner_token == owner_token)
+            projects = query.order_by(Project.created_at.desc()).all()
             return {"success": True, "msg": "Projects fetched", "data": projects}
         except Exception as e:
             self.db.rollback()

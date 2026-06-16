@@ -4,16 +4,21 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.api.deps import verify_project_owner
 from app.crud.report_crud import ReportCRUD
 from app.db.session import get_db
 from app.schemas.report_schema import ReportResponseSchema
 
-router = APIRouter(prefix="/projects/{project_id}/report", tags=["report"])
+router = APIRouter(
+    prefix="/projects/{project_id}/report",
+    tags=["report"],
+    dependencies=[Depends(verify_project_owner)],
+)
 
 
 @router.post("/generate")
-def generate_report(project_id: UUID, db: Session = Depends(get_db)):
-    result = ReportCRUD(db).generate_report(project_id)
+def generate_report(project_id: UUID, variant_id: UUID | None = None, db: Session = Depends(get_db)):
+    result = ReportCRUD(db).generate_report(project_id, variant_id)
     if not result["success"]:
         return result
     return {"success": True, "msg": result["msg"], "data": ReportResponseSchema.model_validate(result["data"])}
