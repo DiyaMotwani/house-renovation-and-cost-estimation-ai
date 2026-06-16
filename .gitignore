@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Storage (uploaded/generated files)
+backend/storage/uploads/*
+backend/storage/generated/*
+backend/storage/reports/*
+!backend/storage/**/.gitkeep
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+backend/alembic/versions

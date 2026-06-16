@@ -1,0 +1,26 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy==2.0.30
+alembic==1.13.1
+psycopg2-binary==2.9.9
+pydantic==2.7.1
+pydantic-settings==2.2.1
+celery==5.4.0
+redis==5.0.4
+groq==0.18.0
+numpy>=1.26.0,<2
+opencv-python-headless==4.9.0.80
+Pillow==10.3.0
+fpdf2==2.7.9
+python-multipart==0.0.9
+requests==2.31.0
+# Local image generation (CPU-only). torch must come from the CPU wheel index
+# or pip pulls the multi-GB CUDA build.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+huggingface_hub==0.23.4
+diffusers==0.27.2
+transformers==4.39.3
+accelerate==0.29.2
+safetensors==0.4.3
+replicate==1.0.4
