@@ -12,6 +12,29 @@ from app.reports.pdf_generator import generate_pdf_report
 from app.utils.file_handler import get_report_output_path
 
 
+def _basis_label(anchor: str | None) -> str:
+    """Human-friendly description of how a zone's area (dimension) was derived."""
+    if not anchor:
+        return "-"
+    if anchor == "user_measurement":
+        return "measured"
+    if anchor.startswith("reference:"):
+        return f"ref: {anchor.split(':')[1]}"
+    if anchor == "vision_estimate":
+        return "AI estimate"
+    if anchor == "architectural_prior":
+        return "typical"
+    return anchor
+
+
+def _coverage_label(item: dict) -> str:
+    cov = item.get("coverage_sqft_per_unit")
+    unit = (item.get("unit") or "unit").rstrip("s")
+    if cov and cov != 1:
+        return f"{cov:g} sqft/{unit}"
+    return "-"
+
+
 class ReportCRUD:
     def __init__(self, db: Session):
         self.db = db
@@ -54,6 +77,8 @@ class ReportCRUD:
                         "zone_label": item.get("zone_label", ""),
                         "material_name": item.get("material_name") or item["material_id"],
                         "area_sqft": item["area_sqft"],
+                        "coverage": _coverage_label(item),
+                        "basis": _basis_label(item.get("dimension_anchor_used")),
                     }
                 )
                 cost_breakdown.append(
@@ -91,6 +116,8 @@ class ReportCRUD:
                 output_path=output_path,
             )
 
+            # Store the GST-inclusive figure as the headline grand total.
+            grand_total_with_gst = summary.get("total_payable_inr", summary["grand_total_inr"])
             existing = (
                 self.db.query(RenovationReport)
                 .filter(RenovationReport.project_id == project_id)
@@ -98,7 +125,7 @@ class ReportCRUD:
             )
             if existing:
                 existing.file_path = output_path
-                existing.grand_total_inr = est_result["data"]["grand_total_inr"]
+                existing.grand_total_inr = grand_total_with_gst
                 existing.total_days = est_result["data"]["total_days"]
                 report = existing
             else:
@@ -106,7 +133,7 @@ class ReportCRUD:
                     id=uuid.uuid4(),
                     project_id=project_id,
                     file_path=output_path,
-                    grand_total_inr=est_result["data"]["grand_total_inr"],
+                    grand_total_inr=grand_total_with_gst,
                     total_days=est_result["data"]["total_days"],
                 )
                 self.db.add(report)

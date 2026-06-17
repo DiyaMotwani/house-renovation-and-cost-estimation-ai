@@ -84,27 +84,30 @@ def generate_pdf_report(
         pdf.ln(2)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 10, "Zone & Material Summary", ln=True)
-    pdf.set_font("Helvetica", "B", 9)
-    col_w = [60, 70, 60]
-    headers = ["Zone", "Material", "Sq Ft"]
+    pdf.cell(0, 10, "Detected Zones & Surface Areas", ln=True)
+    pdf.set_font("Helvetica", "B", 8)
+    # Zone | Material | Surface area | Coverage | Area basis
+    col_w = [42, 50, 28, 38, 32]
+    headers = ["Zone", "Material", "Area (sqft)", "Coverage", "Area basis"]
     for i, h in enumerate(headers):
         pdf.cell(col_w[i], 8, h, border=1)
     pdf.ln()
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font("Helvetica", "", 8)
     for row in zones_summary:
-        pdf.cell(col_w[0], 8, str(row.get("zone_label", ""))[:28], border=1)
-        pdf.cell(col_w[1], 8, str(row.get("material_name", ""))[:32], border=1)
-        pdf.cell(col_w[2], 8, f"{row.get('area_sqft', 0):.1f}", border=1)
+        pdf.cell(col_w[0], 8, str(row.get("zone_label", ""))[:22], border=1)
+        pdf.cell(col_w[1], 8, str(row.get("material_name", ""))[:26], border=1)
+        pdf.cell(col_w[2], 8, f"{row.get('area_sqft', 0):.1f}", border=1, align="R")
+        pdf.cell(col_w[3], 8, str(row.get("coverage", "-"))[:20], border=1)
+        pdf.cell(col_w[4], 8, str(row.get("basis", "-"))[:18], border=1)
         pdf.ln()
     pdf.ln(5)
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 10, "Cost Breakdown (Bill of Quantities)", ln=True)
     pdf.set_font("Helvetica", "B", 7)
-    # Zone | Material | Qty | Rate | Material | Labour rate | Labour | Total
-    col_w2 = [28, 33, 22, 20, 26, 18, 23, 20]
-    headers2 = ["Zone", "Material", "Qty", "Rate", "Material", "Lab/sqft", "Labour", "Total"]
+    # Zone | Material | Quantity required | Rate | Material | Labour rate | Labour | Total
+    col_w2 = [27, 31, 24, 19, 26, 18, 23, 22]
+    headers2 = ["Zone", "Material", "Qty Required", "Rate", "Material", "Lab/sqft", "Labour", "Total"]
     for i, h in enumerate(headers2):
         pdf.cell(col_w2[i], 8, h, border=1, align="C")
     pdf.ln()
@@ -135,11 +138,11 @@ def generate_pdf_report(
 
     total_row("Material subtotal", f"INR {material_subtotal_inr:,.0f}")
     total_row("Labour subtotal", f"INR {labour_subtotal_inr:,.0f}")
-    total_row("Subtotal (Material + Labour)", f"INR {grand_total_inr:,.0f}", bold=True)
     if gst_pct:
         total_row(f"GST @ {gst_pct:.0f}%", f"INR {gst_amount_inr:,.0f}")
-        total_row("Total Payable (incl. GST)", f"INR {total_payable_inr:,.0f}", bold=True)
-    total_row("Estimated Duration", f"{total_days:.1f} working days", bold=True)
+        total_row("Grand Total (incl. GST)", f"INR {total_payable_inr:,.0f}", bold=True)
+    else:
+        total_row("Grand Total", f"INR {grand_total_inr:,.0f}", bold=True)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)

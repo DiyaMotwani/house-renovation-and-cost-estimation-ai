@@ -72,6 +72,11 @@ def compare_variants(project_id: UUID, db: Session = Depends(get_db)):
     for variant in variants_result["data"]:
         img = image_crud.get_generated_for_variant(project_id, variant.id)
         est = estimation_crud.get_estimation(project_id, variant.id)
+        # Populate a missing estimate from this variant's own materials so the
+        # comparison is accurate; never overwrite one that already exists
+        # (keeps any rate overrides the user set for that design).
+        if not est["success"]:
+            est = estimation_crud.run_estimation(project_id, variant.id)
         est_data = est["data"] if est["success"] else None
         items.append(
             {

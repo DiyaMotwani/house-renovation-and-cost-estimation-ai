@@ -89,16 +89,12 @@ export default function ReportStep({ projectId }) {
             <p className="text-sm text-slate-500">Your renovation plan has been compiled successfully.</p>
           </div>
 
-          <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
+          <div className="border-b border-slate-100">
             <div className="p-5 text-center">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Grand Total</p>
+              <p className="text-xs uppercase tracking-wide text-slate-400">Grand Total (incl. GST)</p>
               <p className="mt-1 font-display text-2xl font-bold text-slate-900">
                 ₹{Number(report.grand_total_inr).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
               </p>
-            </div>
-            <div className="p-5 text-center">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Duration</p>
-              <p className="mt-1 font-display text-2xl font-bold text-slate-900">{report.total_days} days</p>
             </div>
           </div>
 

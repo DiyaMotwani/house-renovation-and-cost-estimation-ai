@@ -25,6 +25,8 @@ class EstimationItemSchema(BaseModel):
     area_sqft: float
     qty_required: float
     unit: str
+    coverage_sqft_per_unit: float | None = None
+    coats_required: float | None = None
     wastage_pct: float | None = None
     base_unit_price_inr: float | None = None
     applied_unit_price_inr: float | None = None

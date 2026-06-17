@@ -108,6 +108,9 @@ materials, estimate and preview to it.
 
 ## 4. How the Estimation Works
 
+> For the full breakdown (catalog rates, formulas, worked examples, units per material),
+> see **[COST_ESTIMATION.md](COST_ESTIMATION.md)**.
+
 ### 4.1 Surface-area basis (`app/utils/area_estimator.py`)
 Areas are advisory and derived in priority order:
 1. **User measurement** — if the homeowner entered the real front width, every zone area

@@ -5,7 +5,7 @@ import { Spinner } from '../ui/kit';
 const inr = (n) =>
   n == null ? '—' : '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 
-export default function VariantBar({ projectId, onChanged }) {
+export default function VariantBar({ projectId, onChanged, showCosts = false }) {
   const [variants, setVariants] = useState([]);
   const [busy, setBusy] = useState(false);
   const [compare, setCompare] = useState(null); // null | [] (loading) | items
@@ -107,13 +107,13 @@ export default function VariantBar({ projectId, onChanged }) {
       {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
 
       {compare !== null && (
-        <CompareModal items={compare} onClose={() => setCompare(null)} inr={inr} />
+        <CompareModal items={compare} onClose={() => setCompare(null)} inr={inr} showCosts={showCosts} />
       )}
     </div>
   );
 }
 
-function CompareModal({ items, onClose, inr }) {
+function CompareModal({ items, onClose, inr, showCosts }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
       <div
@@ -141,11 +141,18 @@ function CompareModal({ items, onClose, inr }) {
                     No preview generated
                   </div>
                 )}
-                <div className="space-y-1 p-3 text-sm">
-                  <Row label="Subtotal" value={inr(it.grand_total_inr)} />
-                  <Row label="Total payable" value={inr(it.total_payable_inr)} bold />
-                  <Row label="Duration" value={it.total_days != null ? `${it.total_days} days` : '—'} />
-                </div>
+                {showCosts && (
+                  <div className="space-y-1 p-3 text-sm">
+                    {it.total_payable_inr != null ? (
+                      <>
+                        <Row label="Material + Labour" value={inr(it.grand_total_inr)} />
+                        <Row label="Grand Total (incl. GST)" value={inr(it.total_payable_inr)} bold />
+                      </>
+                    ) : (
+                      <p className="text-xs text-slate-400">Not estimated yet — assign materials first.</p>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

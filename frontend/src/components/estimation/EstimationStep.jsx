@@ -4,6 +4,30 @@ import { Alert, Spinner, StepHeader } from '../ui/kit';
 import VariantBar from '../variants/VariantBar';
 
 const inr = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+// Whole number for countable items (tiles), one decimal for litres/sqft/rft.
+const qty = (n) => (Number.isInteger(n) ? n.toString() : Number(n).toFixed(1));
+
+// How this zone's surface area (dimension) was derived — kept transparent/advisory.
+const basisLabel = (anchor) => {
+  if (!anchor) return null;
+  if (anchor === 'user_measurement') return 'measured';
+  if (anchor.startsWith('reference:')) return `ref: ${anchor.split(':')[1]}`;
+  if (anchor === 'vision_estimate') return 'AI visual estimate';
+  if (anchor === 'architectural_prior') return 'typical proportions';
+  return anchor;
+};
+
+// "Coverage" line (req 5.6) — only meaningful when a unit covers more than 1 sqft.
+const coverageLabel = (item) => {
+  const parts = [];
+  if (item.coverage_sqft_per_unit && item.coverage_sqft_per_unit !== 1) {
+    const u = item.unit ? item.unit.replace(/s$/, '') : 'unit';
+    parts.push(`${item.coverage_sqft_per_unit} sqft / ${u}`);
+  }
+  if (item.coats_required && item.coats_required > 1) parts.push(`${item.coats_required} coats`);
+  if (item.wastage_pct != null) parts.push(`${item.wastage_pct}% wastage`);
+  return parts.join(' · ');
+};
 
 // An edited rate counts as an override only when it is a positive number that
 // actually differs from the catalog rate; blank or "same as default" clears it.
@@ -128,7 +152,7 @@ export default function EstimationStep({ projectId, onComplete }) {
           index={4}
           total={5}
           title="Cost estimation"
-          subtitle="An indicative Bill of Quantities for the active design. Edit any unit rate or labour rate to recalculate instantly; clear a field to restore the standard rate."
+          subtitle="An indicative Bill of Quantities for the active design — one line per detected zone, showing its surface area, material, quantity (with coverage & wastage), material and labour cost. Edit any unit or labour rate to recalculate; clear a field to restore the standard rate."
         />
         {recalculating && (
           <span className="pill mt-1 shrink-0 bg-brand-50 text-brand-700">
@@ -138,7 +162,7 @@ export default function EstimationStep({ projectId, onComplete }) {
         )}
       </div>
 
-      <VariantBar projectId={projectId} onChanged={onVariantChanged} />
+      <VariantBar projectId={projectId} onChanged={onVariantChanged} showCosts />
 
       {error && <Alert variant="error" className="mb-4">{error}</Alert>}
 
@@ -157,9 +181,9 @@ export default function EstimationStep({ projectId, onComplete }) {
                 <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="p-3.5 text-left font-semibold">Zone</th>
-                    <th className="p-3.5 text-left font-semibold">Material</th>
-                    <th className="p-3.5 text-right font-semibold">Area (sqft)</th>
-                    <th className="p-3.5 text-right font-semibold">Qty (incl. wastage)</th>
+                    <th className="p-3.5 text-left font-semibold">Material / Coverage</th>
+                    <th className="p-3.5 text-right font-semibold">Surface Area (sqft)</th>
+                    <th className="p-3.5 text-right font-semibold">Quantity Required</th>
                     <th className="p-3.5 text-right font-semibold">Unit Rate (₹)</th>
                     <th className="p-3.5 text-right font-semibold">Material (₹)</th>
                     <th className="p-3.5 text-right font-semibold">Labour/sqft (₹)</th>
@@ -173,13 +197,18 @@ export default function EstimationStep({ projectId, onComplete }) {
                       <td className="p-3.5 font-medium text-slate-800">{item.zone_label || item.zone_id}</td>
                       <td className="p-3.5">
                         <div className="text-slate-700">{item.material_name}</div>
-                        {item.wastage_pct != null && (
-                          <div className="mt-0.5 text-xs text-slate-400">{item.wastage_pct}% wastage</div>
+                        {coverageLabel(item) && (
+                          <div className="mt-0.5 text-xs text-slate-400">{coverageLabel(item)}</div>
                         )}
                       </td>
-                      <td className="p-3.5 text-right tabular-nums text-slate-600">{item.area_sqft.toLocaleString('en-IN')}</td>
                       <td className="p-3.5 text-right tabular-nums text-slate-600">
-                        {item.qty_required.toFixed(1)} {item.unit}
+                        {item.area_sqft.toLocaleString('en-IN')}
+                        {basisLabel(item.dimension_anchor_used) && (
+                          <div className="text-xs font-sans text-slate-400">{basisLabel(item.dimension_anchor_used)}</div>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-right tabular-nums text-slate-600">
+                        {qty(item.qty_required)} {item.unit}
                       </td>
                       <td className="p-3.5 text-right">
                         <input
@@ -225,20 +254,16 @@ export default function EstimationStep({ projectId, onComplete }) {
             <div className="card w-full max-w-sm p-5 text-sm">
               <Row label="Material subtotal" value={inr(summary.material_subtotal_inr)} />
               <Row label="Labour subtotal" value={inr(summary.labour_subtotal_inr)} />
-              <div className="my-2 border-t border-slate-100" />
-              <Row label="Subtotal" value={inr(summary.grand_total_inr)} bold />
               {summary.gst_pct > 0 && (
-                <>
-                  <Row label={`GST @ ${summary.gst_pct}%`} value={inr(summary.gst_amount_inr)} />
-                  <div className="my-3 border-t border-dashed border-slate-200" />
-                  <div className="flex items-center justify-between rounded-xl bg-brand-50 px-3 py-2.5">
-                    <span className="font-semibold text-brand-900">Total Payable</span>
-                    <span className="font-display text-xl font-bold text-brand-700">{inr(summary.total_payable_inr)}</span>
-                  </div>
-                </>
+                <Row label={`GST @ ${summary.gst_pct}%`} value={inr(summary.gst_amount_inr)} />
               )}
-              <div className="my-2 border-t border-slate-100" />
-              <Row label="Estimated duration" value={`${summary.total_days.toFixed(1)} working days`} />
+              <div className="my-3 border-t border-dashed border-slate-200" />
+              <div className="flex items-center justify-between rounded-xl bg-brand-50 px-3 py-2.5">
+                <span className="font-semibold text-brand-900">Grand Total (incl. GST)</span>
+                <span className="font-display text-xl font-bold text-brand-700">
+                  {inr(summary.gst_pct > 0 ? summary.total_payable_inr : summary.grand_total_inr)}
+                </span>
+              </div>
             </div>
           </div>
 

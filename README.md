@@ -58,4 +58,7 @@ http://localhost:8000/docs
 
 See `backend/.env.example` and `frontend/.env.example`.
 
-# house-renovation
+## Documentation
+
+- **[DOCUMENTATION.md](DOCUMENTATION.md)** — full system: architecture, workflow, features, API, data model, limitations.
+- **[COST_ESTIMATION.md](COST_ESTIMATION.md)** — deep dive into how the cost estimation works (surface area, quantity, wastage, coverage, rates, GST) with worked examples.

@@ -47,6 +47,8 @@ def _serialize_item(est: ProjectEstimation, zone: ProjectZone | None, material: 
         "area_sqft": est.area_sqft,
         "qty_required": est.qty_required,
         "unit": est.unit,
+        "coverage_sqft_per_unit": costs.get("coverage_sqft_per_unit"),
+        "coats_required": costs.get("coats_required"),
         "wastage_pct": costs["wastage_pct"],
         "base_unit_price_inr": costs["base_unit_price_inr"],
         "applied_unit_price_inr": costs["applied_unit_price_inr"],

@@ -5,6 +5,7 @@ alembic==1.13.1
 psycopg2-binary==2.9.9
 pydantic==2.7.1
 pydantic-settings==2.2.1
+python-dotenv==1.2.2
 celery==5.4.0
 redis==5.0.4
 groq==0.18.0

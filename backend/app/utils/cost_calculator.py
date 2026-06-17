@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 
@@ -34,6 +35,10 @@ def calculate_zone_cost(
     base_qty = (area_sqft / coverage) * coats
     wastage_qty = base_qty * wastage_factor
     final_qty = base_qty + wastage_qty
+
+    # Countable items (e.g. tiles) are bought as whole units, never fractions.
+    if material.get("count_based"):
+        final_qty = float(math.ceil(final_qty))
 
     material_cost = final_qty * unit_price
     labour_cost = area_sqft * labour_rate
